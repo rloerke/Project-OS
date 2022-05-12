@@ -1,0 +1,285 @@
+// Ray Loerke
+// This is a program that provides a command line shell
+// Find a list of helpful functions in userlib.h
+
+
+void main() {
+
+	// buf will hold the commands typed in by the user
+	char buf[256];
+
+	// srcBuf will hold the name of the source file for the copy command
+	// In dir it is used to store the seperate names of each file before they are displayed
+	char srcBuf[256];
+
+	// fileBuf is where files will be read into 
+	// Maximum file size is 13312 bytes
+	char fileBuf[13312];
+
+	// size holds the list of file sizes for the dir command
+	int size[26];
+
+	// returnVal is used to hold return values
+	// j and x are iterators
+	// srcLength is the length of each source file name for the copy command
+	int returnVal, j, x, srcLength;
+
+	// Ints are initialized to 0
+	srcLength = 0;
+	returnVal = 0;
+	j = 0;
+	x = 0;
+	
+	// Files are padded so output is cleaner
+	fileBuf[0] = '\n';
+	fileBuf[1] = '\r';
+	
+	while (1) {
+		//print a command prompt (e.g., "Shell> ")
+		printS("Shell> ");
+		//read a line of input from the user
+		readS(buf, 256);
+
+		// Check if the user types in the "type" command
+		if ((buf[0] == 't') && (buf[1] == 'y') && (buf[2] == 'p') && 
+			(buf[3] == 'e') && (buf[4] == ' ')) {
+
+			// If so try to read the file they indicated into our fileBuf
+			// buf is increased by 5 to skip the "type " characters
+			// fileBuf is increased by 2 to skip the \n\r characters
+			returnVal = readF((buf + 5), (fileBuf + 2), 13312);
+
+			// If the file was not found print an error message
+			if (returnVal == -1) {
+				printS("\n\rError: File not found\n\r");
+			}
+
+			// If the file was found display its contents
+			else {
+				printS(fileBuf);
+			}
+
+			// buf is now sanitized so it can be reused later
+			for (j; j < 256; j++) {
+				buf[j] = 0;
+			}
+			j = 0;
+
+			// fileBuf is now sanitized so it can be reused later
+			for (j; j < 13312; j++) {
+				fileBuf[j] = 0;
+			}
+			j = 0;
+
+			// Return value holder is reset to 0 and fileBuf is repadded
+			returnVal = 0;
+			fileBuf[0] = '\n';
+			fileBuf[1] = '\r';
+		}
+
+		// Check if the user types in the "execute" command
+		else if ((buf[0] == 'e') && (buf[1] == 'x') && (buf[2] == 'e') && 
+				(buf[3] == 'c') && (buf[4] == 'u') && (buf[5] == 't') && 
+				(buf[6] == 'e') && (buf[7] == ' ')) {
+			
+			// If so, execute the indicated file
+			returnVal = exec((buf + 8), 0x2000);
+
+			// If we recieve -1 the program was not found, print an error
+			if (returnVal == -1) {
+				printS("\n\rError: Program not found\n\r");
+			}
+			
+			// If we recieve -2 the segment we provided was not valid, print an error
+			// At some point we might update this to allow the user to indicate segment
+			if (returnVal == -2) {
+				printS("\n\rError: Segment Invalid\n\r");
+			}
+			
+			// If we recieve -3 the program is not an executable, print an error
+			if (returnVal == -3) {
+				printS("\n\rError: File is not Executable\n\r");
+			}
+
+			// buf is now sanitized so it can be reused later
+			for (j; j < 256; j++) {
+				buf[j] = 0;
+			}
+			j = 0;
+
+			// Return value holder is reset to 0
+			returnVal = 0;
+		}
+
+		// READ!: A weird bug is causign delete to not be recognized. 
+		// I commented out the code that SHOULD be working and replaced it with code that will actually function. 
+		// To use the delete functionality type "d " instead of "delete ".
+
+		// Check if user types in the "delete" command
+		/*
+		else if ((buf[0] == 'd') && (buf[1] == 'e') && (buf[2] == 'l') && 
+				(buf[3] == 'e') && (buf[4] == 't') && (buf[5] == 'e') && 
+				(buf[6] == ' ')) {
+		*/
+		else if ((buf[0] == 'd') && (buf[1] == ' ')) {
+
+			// If so, delete the indicated file
+			//returnVal = deleteF(buf + 7);
+			returnVal = deleteF(buf + 2);
+
+			// If we recieve -1 the file was not found, print an error
+			if (returnVal == -1) {
+				printS("\n\rError: File not found\n\r");
+			}
+
+			// If we recieve 1 the file was deleted, notify the user
+			if (returnVal == 1) {
+				printS("\n\rFile Deleted!\n\r");
+			}
+
+			// buf is now sanitized so it can be reused later
+			for (j; j < 256; j++) {
+				buf[j] = 0;
+			}
+			j = 0;
+
+			// Return value holder is reset to 0
+			returnVal = 0;
+		}
+
+		// Check if user types in the "copy" command
+		else if ((buf[0] == 'c') && (buf[1] == 'o') && (buf[2] == 'p') && 
+				(buf[3] == 'y') && (buf[4] == ' ')) {
+
+			// If so, pull the source file name out of the user input and store it in srcBuf
+			while (buf[5 + srcLength] != ' ') {
+				srcBuf[srcLength] = buf[5 + srcLength];
+				srcLength++;
+			}
+
+			// Then, read the source file into our file buffer
+			returnVal = readF(srcBuf, fileBuf, 13312);
+
+			// If we recieve -1 the file was not found, print an error
+			if (returnVal == -1) {
+				printS("\n\rError: File not found\n\r");
+			}
+
+			// If the file was found write the file from the buffer onto the disk using the new name
+			else {
+
+				// We add 6 and srcLength to buf to reach the destination file name 
+				j = writeF((buf + 6 + srcLength), fileBuf, returnVal);
+
+				// If we recieve -1 the disk directory is full, print an error
+				if (j == -1) {
+					printS("\n\rError: Disk Directory is full\n\r");
+				}
+
+				// If we recieve -2 the disk does not have enough free sectors, print an error
+				if (j == -2) {
+					printS("\n\rError: Disk is full\n\r");
+				}
+
+				// If we recieve an int greater than 1 the file was copied successfully, inform the user
+				if (j >= 1) {
+					printS("\n\rFile Copied!\n\r");
+				}
+			}
+
+			// Reset source length and return value holders to 0
+			srcLength = 0;
+			returnVal = 0;
+			j = 0;
+
+			// buf is now sanitized so it can be reused later
+			for (x; x < 256; x++) {
+				buf[x] = 0;
+			}
+			x = 0;
+
+			// srcBuf is now sanitized so it can be reused later
+			for (x; x < 256; x++) {
+				srcBuf[x] = 0;
+			}
+			x = 0;
+
+			// fileBuf is now sanitized so it can be reused later
+			for (x; x < 13312; x++) {
+				fileBuf[x] = 0;
+			}
+			x = 0;
+
+			// fileBuf is repadded
+			fileBuf[0] = '\n';
+			fileBuf[1] = '\r';
+
+		}
+
+		// Check if user types in the "dir" command
+		else if ((buf[0] == 'd') && (buf[1] == 'i') && (buf[2] == 'r')) {
+
+			// If so, make some space
+			printS("\n\r\n\r");
+
+			// Call direc to fill fileBuf and size with file names and sizes
+			direc(fileBuf, size);
+
+			// Loop while we have more files to display
+			while (size[returnVal] != 0) {
+
+				// Copy the leters of the file name into a buffer until a space is reached
+				while (fileBuf[x] != ' ') {
+					srcBuf[j] = fileBuf[x];
+					j++;
+					x++;
+				}
+				
+				// The name and size of each file is then displayed
+				printS(srcBuf);
+				printS(" ");
+				printI(size[returnVal]);
+				printS("\n\r");
+				returnVal++;
+				x++;
+
+				// srcBuf is sanitized so it can be reused
+				j = 0;
+				for (j; j < 6; j++) {
+					srcBuf[j] = 0;
+				}
+				j = 0;
+			}
+
+			// A little padding is added once all files have been displayed 
+			printS("\n\r");
+
+			// Iterators are reset to 0
+			x = 0;
+			returnVal = 0;
+
+			// size is now sanitized so it can be reused later
+			for (j; j < 26; j++) {
+				size[j] = 0;
+			}
+			j = 0;
+
+			// fileBuf is now sanitized so it can be reused later
+			for (j; j < 13312; j++) {
+				fileBuf[j] = 0;
+			}
+			j = 0;
+
+			// fileBuf is repadded
+			fileBuf[0] = '\n';
+			fileBuf[1] = '\r';
+		}
+	
+		// If anything else is types it was a command we do not recognize 
+		else {
+			printS("\n\rUnrecognized command\n\r");
+		}
+	}
+}
+
+

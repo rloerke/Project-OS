@@ -1,0 +1,48 @@
+// Ray Loerke
+// userlib is a library of wrappers for interrupt calls to be used when writing programs
+
+// printS displays a string on the screen
+// It takes a pointer to a char array where the desired string is stored
+// Returns the number of characters printed
+// Corresponds to interrupt 0x21- 0x00
+int printS(char *addr);
+
+// readC takes in a char from user and stores it in a buffer
+// It takes in a pointer to a buffer where the input will be stored
+// Returns 1 if successful
+// Corresponds to interrupt 0x21- 0x11
+int readC(char *buf);
+
+// readS takes in a line of text from the user and stores it in a buffer
+// It takes a pointer to a char array where the input will be sotred,
+// and an int indicating the maximum capacity of that buffer array
+// Returns the number of characters placed into the buffer 
+// Corresponds to interrupt 0x21- 0x01
+int readS(char *buf, int capacity);
+
+// readF reads a file from a floppy disk and stores the contents of that file in a buffer
+// It takes a pointer to a char array containing the name of the file to be read,
+// a pointer to a char array where the contents of the file will be placed,
+// and an int indicating the maximum capacity of the buffer
+// Returns the number of sectors that were read, returns -1 if unsuccessful
+// Corresponds to interrupt 0x21- 0x03
+int readF(char *name, char *buf, int capacity);
+
+// exec executes a program from a floppy disk
+// It takes a pointer to a char array containing the name of the program,
+// and an integer indicating the segment of memory the file should be loaded into
+// Returns -1 if the program was not found, -2 if the segment is invalid, and -3 if the file is not an executable
+// Returns nothing if successful
+// Corresponds to interrupt 0x21- 0x04
+int exec(char *name, int seg);
+
+// term terminates a function and executes the shell
+// It does not take any inputs or return anything
+// Corresponds to interrupt 0x21- 0x05
+void term();
+
+int deleteF(char *name);
+
+int writeF(char *name, char *buf, int numSectors);
+
+void direc(char *nameBuf, int *sizeBuf);

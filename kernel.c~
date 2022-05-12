@@ -1,0 +1,970 @@
+// Ray Loerke, Kernel for basic OS
+void putChar(char c, char color, int row, int col);
+void putStr(char s[], char color, int row, int col);
+int printString(char *str);
+int readChar();
+int readString(char *buf, int maxChars);
+int readSector(char *buf, int absSector);
+int mod(int dividen, int divisor);
+int handleInterrupt21(int ax, int bx, int cx, int dx);
+int printInt(int x);
+int readFile(char *filename, char *buf, int capacity, int *sec);
+int findFile(char *filename);
+int executeProgram(char* name, int segment);
+void terminate();
+int addMagic(char* name);
+int writeSector(char *buf, int absSector);
+int deleteFile(char *fname);
+int writeFile(char *fname, char *buffer, int sectors);
+int dirSpace();
+int mapSpace();
+void directory(char *nameBuf, int *sizeBuf);
+
+
+int main(void) {
+	/*
+	// Buffers are set up for manual tests
+	char buffer[13312];
+	char buffer2[13312];
+	int size[16];
+	*/
+
+	addMagic("shell");
+	addMagic("uprog1");
+	addMagic("uprog2");
+
+	// Test 1, deleting a file
+	//deleteFile("messag");
+
+	/*
+	// Test 2, manualy copying a file
+	readFile("messag", buffer, 13312, 0);
+	writeFile("mess2", buffer, 1);
+	readFile("mess2", buffer2, 13312, 0);
+	printString(buffer2);
+	*/
+
+	// Test 3, directory function
+	//directory(buffer, size);
+	//printString(buffer);
+
+	// Should also be able to test these through the shell
+	makeInterrupt21();
+	interrupt(0x21, 0x04, "shell", 0x2000, 0);
+	
+
+	while(1){}
+
+	return 0;
+}
+
+
+// putChar displays a character on the screen in the desired color
+// Row and column should be format as decimal integers
+void putChar(char c, char color, int row, int col) {
+	int addr;
+	addr = 0;
+
+	// Each character takes up 2 bytes so we multiply column by 2
+	// Each row is 160 bytes long so we multiply row by 160
+	addr = (col * 2) + (row * 160);
+	putInMemory(0xB000, 0x8000 + addr, c);
+	putInMemory(0xB000, 0x8000 + addr + 1, color);
+}
+
+
+// putStr displays a char array on the screen starting at the given position
+// Row and column should be format as decimal integers
+void putStr(char s[], char color, int row, int col) {
+	int addr, i, j;
+
+	// i is the iterator for our for loop
+	i = 0;
+
+	// j is a counter of how many characters have been displayed since the last newline character
+	j = 0;
+	addr = (col * 2) + (row * 160);
+
+	// This loop goes through each character and ends when it reaches a null character or the end of the array
+	for (i; s[i] != '\0'; i++) {
+
+		// If there is a newline character we move to the next row and back up before increasing our iterator to skip displaying the newline character
+		if (s[i] == '\n') { 
+			addr += 160;
+			addr -= ((j * 2) + 2);
+			j = 0;
+			i++; 
+		}
+		putInMemory(0xB000, 0x8000 + addr + (i * 2), s[i]);
+		putInMemory(0xB000, 0x8000 + addr + 1 + (i * 2), color);	
+		j++;
+	}
+}
+
+
+// Prints the contents of the string at the current cursor location
+// Takes a pointer to a character array containing the string
+// Returns the number of characters that were printed. 
+int printString(char *str) {
+	int counter, ax;
+	counter = 0;
+	ax = 0;
+
+	// Stop displaying characters when the null terminator is reached
+	while (*str != 0x00) {
+
+		// Sets the high and low bits with the current char and calls an interrupt
+		ax = 0x0E * 256 + *str;
+		interrupt(0x10, ax, 0, 0, 0);
+		counter++;
+		str++;
+	}
+	return counter;
+}
+
+
+// Reads an ASCII character from the keyboard
+// Returns an int, the low order byte is the ASCII characer
+// The high order byte is the scan code
+int readChar() {
+	return interrupt(0x16, 0, 0, 0, 0);
+}
+
+
+// Reads characters into the given array from the keyboard until enter is pressed
+// Takes a pointer to the array where the string will be stored and the maximum size of that array
+// Returns the number of characters stored in the buffer, not including the null terminator 
+int readString(char *buf, int maxChars) {
+	char keyPressed;
+	int ax, charsInBuf, charsOnScreen;
+	charsInBuf = 0;
+	charsOnScreen = 0;
+	ax = 0;
+	keyPressed = 0;
+
+	do {
+
+		// A keypress is stored in a temporary char
+		keyPressed = interrupt(0x16, 0, 0, 0, 0);
+		
+		// If the user presses backspace when there are no more characters being displayed nothing should happen
+		// If enter is pressed nothing should happen and the loop should end
+		if ((keyPressed == 0x08 && charsOnScreen == 0) || keyPressed == 0x0D){}
+		else if (keyPressed == 0x08) {
+
+			// To remove a character from the screen the cursor is moved back, the character is deleted (moving the cursor forward), and the cursor is moved back again
+			ax = 0x0E * 256 + 0x08;
+			interrupt(0x10, ax, 0, 0, 0);
+			ax = 0x0E * 256 + 0x00;
+			interrupt(0x10, ax, 0, 0, 0);
+			ax = 0x0E * 256 + 0x08;
+			interrupt(0x10, ax, 0, 0, 0);
+
+			// Only move buf back if we are still filling the array
+			if (charsInBuf == charsOnScreen) {
+				buf--;
+				charsInBuf--;
+			}
+			charsOnScreen--;
+		}
+		else {
+
+			// The character is displayed on the screen
+			ax = 0x0E * 256 + keyPressed;
+			interrupt(0x10, ax, 0, 0, 0);
+			charsOnScreen++;
+
+			// If there is room in the array the new character is added
+			if (charsInBuf < maxChars - 1) {
+				*buf = keyPressed;
+				charsInBuf++;
+				buf++;
+			}
+		}
+
+	} while (keyPressed != 0x0D);
+	
+	// The last character is filled with the null terminator 
+	*buf = 0x00;
+	return charsInBuf;
+}
+
+
+// Function by Professor Brian Law
+// Calculate dividend % divisor. Handles negative numbers properly.
+int mod(int dividend, int divisor) {
+	// Deal with negative divisor.
+	if (divisor < 0) {
+		divisor = divisor * -1;
+	}
+	// This should probably throw an exception... but we're the OS!
+	else if (divisor == 0) {
+		return -1;
+	}	
+
+	// Positive dividend
+	if (dividend >= 0) {
+		while (dividend >= divisor) {
+			dividend = dividend - divisor;
+		}
+	}
+	// Negative dividend
+	else {
+		while (dividend < 0) {
+			dividend = dividend + divisor;
+		}
+	}
+
+	return dividend;
+}
+
+
+// Reads a sector of a floppy disk
+// Takes a pointer to an array where the data will be stored, and absolute sector number of the disk to be read
+// Returns 1 to indicate a successful transfer 
+int readSector(char *buf, int absSector) {
+	int relSector, head, track, ax, cx, dx;
+	relSector = 0;
+	head = 0;
+	track = 0;
+	ax = 0;
+	cx = 0;
+	dx = 0;
+
+	// The absolute sector is translated into relative parts
+	relSector = mod(absSector, 18 ) + 1;
+	head = mod(( absSector / 18 ), 2);
+	track = ( absSector / 36 );
+	
+	// High and low bytes are combined
+	ax = 0x02 * 256 + 0x01;
+	cx = track * 256 + relSector;
+	dx = head * 256 + 0x00;
+
+	interrupt(0x13, ax, buf, cx, dx);
+	return 1;
+}
+
+
+// This function is the basis of a system call interface
+// ax indicates which service is being requested
+// bx, cx, and dx are arguments for the specified interrupt
+// Returns an int whose meaning will vary based on the service requested
+int handleInterrupt21(int ax, int bx, int cx, int dx) {
+	int i;
+	char* c;
+	i = 0;
+	c = 0;
+
+	// 0x00 is the value for printString
+	// bx is the address of the string to be printed, other arguments are not used
+	// Returns the number of characters printed
+	if (ax == 0x00) {
+		i = printString(bx);
+		return i;
+	}
+
+	// 0x11 is the value for readChar
+	// bx is the address of the buffer the char will be read into, other arguments are not used
+	// Returns 1 on success
+	else if (ax == 0x11) {
+		c = bx;
+		*c = readChar();
+		return 1;
+	}
+
+	// 0x03 is the value for readFile
+	// bc is a pointer to a char array containing the name of the file to be read
+	// cx is a pointer to a char array buffer the file will be read into
+	// dx is the capacity of the buffer cx
+	// The user should only be able to call readFile without providing a sectors array so the last argument is 0
+	// Returns the number of sectors read if successful, -1 if the file can't be found
+	else if (ax == 0x03) {
+		i = readFile(bx, cx, dx, 0);
+		return i;
+	}
+
+	// 0x04 is the value for executeProgram
+	// bx is a pointer to a char array containing the name of the file to be executed
+	// cx is an integer indicating what sector of memory the program should be loaded into
+	// Returns -1 if the program was not found, -2 if the segment is not valid, and -3 if the file is not an executable
+	else if (ax == 0x04) {
+		i = executeProgram(bx, cx);
+		return i;
+	}
+
+	// 0x05 is the value for terminate
+	// No arguments are needed and no return value is given
+	else if (ax == 0x05) {
+		terminate();
+	}
+
+	// 0x07 is the value for deleteFile
+	// bx is a pointer to a char array containing the name of the file to be deleted
+	// Returns 1 if successful or -1 if the file was not found
+	else if (ax == 0x07) {
+		return deleteFile(bx);
+	}
+
+	// 0x08 is the value for writeFile
+	// bx is a pointer to a char array containing the name of the file to be written
+	// cx is a pointer to a char array containing the data for the file
+	// dx is an int representing the size of the file in sectors
+	// Returns the number of sectors written if successful, 
+	// -1 if there is no disk directory entry available,
+	// and -2 if there are not enough free sectors
+	else if (ax == 0x08) {
+		return writeFile(bx, cx, dx);
+	}
+
+	// 0x21 is the value for directory
+	// bx is a pointer to a char array where the names of each file will be stored seperated by spaces
+	// cs is a pointer to a int array where the size of each file in sectors will be stored
+	else if (ax == 0x20) {
+		directory(bx, cx);
+	}
+
+	// 0x21 is the value for printInt
+	// bx is the integer to be displayed
+	// Returns 1 if successful
+	else if (ax == 0x21) {
+		return printInt(bx);
+	}
+
+	// 0x01 is the value for readString
+	// bx is the address of the buffer the string will be read into, other arguments are not used
+	// cx is the maximum size of the array being read into 
+	// Returns the number of characters placed in the buffer
+	else if (ax = 0x01) {
+		i = readString(bx, cx);
+		return i;
+	}
+
+	// If an unknown service is requested -1 will be returned
+	else {
+		return -1;
+	}
+}
+
+
+// Prints the base 10 value of an integer to the screen
+// Takes an integer, returns 1 if successful
+int printInt(int x) {
+	
+	// A temporary array and pointer are set up to store the individual values of each digit of the integer
+	int digs[20];
+	int *d_ptr = &digs;
+	int counter, ax, negative;
+	negative = 0;
+	counter = 0;
+	ax = 0;
+
+	// If negative number convert to positive and record that number was negative
+	if (x < 0) {
+		negative = 1;
+		x = x * -1;
+	}
+
+	// If 0 is input the coresponding ASCII character is displayed
+	if (x == 0) {
+		ax = 0x0E * 256 + 48;
+		interrupt(0x10, ax, 0, 0, 0);
+		return 1;
+	}
+
+	// Otherwise each digit is picked out and stored in the temporary array
+	while (x > 0 && counter < 20) {
+		*d_ptr = mod(x, 10) +48;
+		x /= 10;
+		d_ptr++;
+		counter++;
+	}
+
+	// If negative print out a - before the number
+	if (negative) {
+		ax = 0x0E * 256 + 45;
+		interrupt(0x10, ax, 0, 0, 0);
+	}
+
+	// Decrease counter and pointer due to overshoot 
+	d_ptr--;
+	counter--;
+	
+	// Then each digit has its ASCII character individualy displayed 
+	while (counter >= 0) {
+		ax = 0x0E * 256 + *d_ptr;
+		interrupt(0x10, ax, 0, 0, 0);
+		d_ptr--;
+		counter--;
+	}
+	return 1;
+}
+
+
+// This function searches the disk directory for the indicated file and reads it into the given buffer
+// It takes a pointer to a char array containing the name of the file,
+// a pointer to a char array buffer where the file will be read into,
+// the maximum capacity of that buffer,
+// and a buffer where the sectors the file takes up are stored. This can be left as 0 if the user does not wish to keep the sectro values of the file
+// Returns the number of sectors that were read if successful and -1 if unsuccessful
+int readFile(char *filename, char *buf, int capacity, int *sec) {
+
+	// i is an iterator
+	// fLocation will store the location of the file in the disk directory
+	// numSectors tracks how many sectors the file takes up
+	int i, fLocation, numSectors;	
+
+	// se will hold the contents of the disk directory
+	// sec2 will point to se and will be how we access this array
+	char se[512];
+	char *sec2;
+
+	// s will hold the contents of the disk directory
+	// sectors will point to s and will be how we access this array
+	int s[26];
+	int *sectors;
+
+	// Our sec2 pointer is set up
+	sec2 = se;
+
+	// If the user has provided an array we point our pointer at it
+	if (sec != 0) {
+		sectors = sec;
+	}
+
+	// If no, we point our pointer at our own array
+	else {
+		sectors = s;
+	}
+	// The idea here is that reguardless of if the user gave us an array or not we now have an array with the name sectors
+
+	// iterators and counter are set to 0
+	i = 0;
+	fLocation = 0;
+	numSectors = 0;
+
+	// The disk directory is read into sec2
+	readSector(sec2, 2);
+
+	// A helper function is called to search the disk directory for the file name
+	fLocation = findFile(filename);
+
+	// If the file was not found return -1
+	if (fLocation == -1) {
+		return -1;
+	}
+
+	// Move the disk directory pointer to the location of the first sector that makes up the file
+	sec2 += (6 + fLocation);
+	
+	// We then fill up our sectors array with all sectors making up the file
+	while (sec2[i] != '\0' && numSectors < 26) {
+		sectors[i] = sec2[i];
+		numSectors++;
+		i++;
+	}
+
+	// i is set to 0 so it can be reused
+	i = 0;
+
+	// We then call read sector for each entry in our sectors array
+	while (numSectors > 0) {
+		if ((capacity - (512 * i)) > 512) {
+			// The buffer pointer is moved 512 bytes after each sector is read
+			// 512 bytes is the size of a sector
+			readSector(buf + (i * 512), sectors[i]);
+			i++;
+			numSectors--;
+		}
+
+		// If there is not enough room in the buffer we stop reading sectors
+		else {
+			break;
+		}
+	}
+
+	// The number of sectors read is then returned
+	return i;
+}
+
+
+// This function searches the disk directory for the indicated file
+// It takes a pointer to a char array containing the name of the file
+// Returns the location in the disk directory where the file was found or -1 if the file was not found
+int findFile(char *filename) {
+	// fileLoc keeps track of where in the disk directory the file name is found
+	// tempFileLoc is similar to fileLoc but moves across the letters in the file name
+	// count will keep track of how many matching letters are found on the disk directory
+	// j is an iterator
+	int fileLoc, j, tempFileLoc, count;
+	// sec2 will hold the contents of the disk directory 
+	char sec2[512];
+
+	// iterators are set to 0 and the disk directory is read into sec2
+	fileLoc = 0;
+	j = 0;
+	tempFileLoc = 0;
+	count = 0;
+	readSector(sec2, 2);
+	
+	// Then we search through sec2 looking for the given file name
+	for (fileLoc; fileLoc < 512; fileLoc += 32) {
+
+		// We start by looking for a match with the first letter of the file name
+		if (sec2[fileLoc] == filename[0]) {
+
+			// tempFileLoc is used in the following loop instead of fileLoc because we need to keep track of where in the disk directory we found our potential file name match
+			tempFileLoc = fileLoc;
+
+			// Once we find a match of the first letter we search the next characters to see if we have found a complete match
+			for (j; j < 6; j++) {
+
+				// If we hit a null character and have more than one matching letter skip to returning fileLoc
+				if (j > 1 && filename[j] == 0x00 && sec2[tempFileLoc] == 0x00) {
+					count = 6;
+					break;
+				}
+
+				if (sec2[tempFileLoc] == filename[j]) {
+					tempFileLoc++;
+
+					// count is increased for each matching letter we find
+					count++;
+				}	
+
+				// If the entire name does not match we reset out count and iterator and search the rest of the disk directory
+				else {
+					count = 0;
+					j = 0;
+					break;	
+				}
+			}
+
+			// If we found a complete match we return the location of that match in the disk directory
+			if (count == 6) {
+				return fileLoc;
+			}
+		}	
+	}
+
+	// If we have searched the whole file and not found a match we return -1
+	return -1;
+}
+
+
+
+// This function loads a program into memory and executes it
+// It takes a pointer to a char array contanining the name of the program,
+// and an int indicating the absolute segment of memory the program should be put into
+// Returns -1 if the program was not found, -2 if the segment is not valid, and -3 if the file is not an executable
+int executeProgram(char* name, int segment) {
+
+	// secsRead tracks how many sectors the file that has been read takes up
+	// j is an iterator
+	int secsRead, f;
+
+	// The program will be read into this buffer, maximum file size is 13312 bytes
+	char buf[13312];
+	f = 0;
+	secsRead = 0;
+
+	// We call readFile to find the fild and put it into our buffer
+	secsRead = readFile(name, buf, 13312, 0);
+
+	// If the file was not found we return -1
+	if (secsRead == -1) return -1;
+	
+	// If the segment is in a part of memory reserved for other purposes we return -2
+	if (segment <= 0x1000 || segment >= 0xA000 || mod(segment, 0x1000) != 0) return -2;
+
+	// If the program is not an executable we return -3
+	// Executables should start with the letters RL
+	if (buf[0] != 0x52 || buf[1] != 0x4C) return -3;
+
+	// If no errors occured we load the program into memory
+	// Stop looping when we have put the max amount of characters in memory given the amount of sectors read
+	while (f < (secsRead * 512)) {
+		
+		// We add 2 to the buffer pointer to skip the RL characters
+		putInMemory(segment, f, buf[f + 2]);
+		f++;
+	}
+
+	// Once the program is in memory we call launch program
+	launchProgram(segment);
+}
+
+
+// This function ends a program and re-executes the shell
+// This function takes no arguments and returns nothing
+void terminate() {
+
+	// This is a function from the kernel.asm file that resets the segment registers and stack pointer
+	resetSegments();
+
+	// A message is displayed to indicate the termination was successful
+	interrupt(0x21, 0x00, "I'm back!\n\r", 0, 0);
+
+	// The shell is then executed
+	interrupt(0x21, 0x04, "shell", 0x2000, 0);
+}
+
+
+// This function adds two characters to the start of a file to indicate that it is an executable
+// It takes a pointer to a char array containing the name of the file to be edited 
+// Returns -1 if the file is not found and 1 if successful
+int addMagic(char* name){
+
+	// secsRead tracks how many sectors the file that has been read takes up
+	// j is an iterator
+	int secsRead, j;
+
+	// buf is where the contents of the file will be read into
+	char buf[13312];
+
+	// secotors will keep track of which sectors the file is in so the edited file can be written back into these sectors
+	int sectors[26];
+
+	// Iterators are initialized
+	j = 0;
+	secsRead = 0;
+
+	// The first two characters of the file are set to RL
+	buf[0] = 0x52;
+	buf[1] = 0x4C;
+
+	// The file is then read into the buffer
+	// We move the buffer pointer up two so as to not override our characters
+	secsRead = readFile(name, (buf + 2), 13310, sectors);
+
+	// If the file was not found return -1
+	if (secsRead == -1) return -1;
+	
+	// Go through the sectors the file was stored in and write the edited file back into those sectors
+	while (sectors[j] != 0 && j < 26) {
+		writeSector(buf + (j * 512), sectors[j]);
+		j++;
+	}
+
+	// Return 1 if successful
+	return 1;
+}
+
+
+// Writes a sector to a floppy disk
+// Takes a pointer to an array where the data will be stored, and absolute sector number of the disk to be written to
+// Returns 1 to indicate a successful transfer 
+int writeSector(char *buf, int absSector) {
+	int relSector, head, track, ax, cx, dx;
+
+	// Iterators and counters are initialized to 0
+	relSector = 0;
+	head = 0;
+	track = 0;
+	ax = 0;
+	cx = 0;
+	dx = 0;
+
+	// The absolute sector is translated into relative parts
+	relSector = mod(absSector, 18 ) + 1;
+	head = mod(( absSector / 18 ), 2);
+	track = ( absSector / 36 );
+	
+	// High and low bytes are combined
+	ax = 0x03 * 256 + 0x01;
+	cx = track * 256 + relSector;
+	dx = head * 256 + 0x00;
+
+	interrupt(0x13, ax, buf, cx, dx);
+	return 1;
+}
+
+
+// Removes a file from the disk
+// Takes a pointer to a char array containing the name of the file
+// Returns 1 if successful, -1 if the file is not found
+int deleteFile(char *fname) {
+
+	// fLoc tracks the position of the file on the disk directory
+	// i is an iterator
+	// numSectors tracks the size of the file
+	int fLoc, i, numSectors;
+
+	// sectors will store the sectors where the file is stored
+	int sectors[26];
+
+	// The disk map and disk directory will be read into these arrays
+	char diskMap[512];
+	char diskDir[512];
+
+	// dd is a pointer to the disk directory 
+	char *dd; 
+
+	// set iterator and counter to 0
+	i = 0;
+	numSectors = 0;
+
+	// dd is pointed at the disk directory array
+	dd = diskDir;
+
+	// The location of the file to be deleted is stored in fLoc
+	fLoc = findFile(fname);
+	
+	// If the file was not found return -1
+	if (fLoc == -1) {
+		return -1; 
+	}
+
+	// Read in the disk directory and disk map
+	readSector(diskMap, 1);
+	readSector(diskDir, 2);
+
+	// Move our pointer to the start of the sectors list for our file in the disk directory
+	dd += (6 + fLoc);
+	
+	// We then fill up our sectors array with all sectors making up the file
+	while (dd[i] != '\0' && numSectors < 26) {
+		sectors[i] = dd[i];
+		numSectors++;
+		i++;
+	}
+	
+	// Iterator is reset
+	i = 0;
+
+	// The files sectors are set to free (0x00) on the disk map
+	while (numSectors > 0) {
+		diskMap[sectors[i]] = 0x00;
+		i++;
+		numSectors--;
+	}
+	
+	// The first leter of the file name is set to 0x00 marking the entry as free
+	diskDir[fLoc] = 0x00;
+
+	// The modified disk directory and map are written back onto the disk
+	writeSector(diskMap, 1);
+	writeSector(diskDir, 2);
+
+	// If we got to this point deletion was successful, return 1
+	return 1;
+
+}
+
+
+// Copies a file from a buffer onto the disk
+// Takes a pointer to a char array containing the name of the file,
+// a pointer to a char array containing the file's data,
+// and and int representing the size of the file in sectors
+// Returns -1 if the disk directory is full,
+// -2 if there are not enough free sectors,
+// and if successful, the number of sectors written
+int writeFile(char *fname, char *buffer, int sectors) {
+	// dirLoc will hold the location of the next available disk directory entry
+	// nextFree will hold the next free sector on the disk map
+	// exists will track if a file with the same name already exists
+	// counter is a counter, i is an iterator
+	int dirLoc, counter, nextFree, i, exists;
+
+	// secs will track the sectors where the data for the file will be stored
+	int secs[26];
+
+	// The disk map and disk directory will be read into these arrays
+	char diskMap[512];
+	char diskDir[512];
+
+	// ints are initialized to 0
+	counter = 0;
+	nextFree = 0;
+	i = 0;
+
+	// secs is initialized
+	for (i; i < 26; i++) {
+		secs[i] = 0;
+	}
+	i = 0;
+
+	// We try to find an existing file with the same name
+	exists = findFile(fname);
+
+	// We also find the location of the next available disk directory entry
+	dirLoc = dirSpace();
+
+	// If a file with the same name does not exist and the disk directory is full, return -1
+	if (dirLoc == -1 && exists == -1) {
+		return -1;
+	}
+
+	// If a file with the same name already exists we will override it
+	if (exists != -1) {
+		deleteFile(fname);
+		dirLoc = exists;
+	}
+
+	// Now we will try to write the file's data into free sectors
+	while (sectors > 0 && counter < 26) {
+
+		// Find the next free sector
+		nextFree = mapSpace();
+		
+		// If there are no more free sectors, return -2
+		if (nextFree == -1) {
+			return -2;
+		}
+
+		// Write the data into the sector and record the sector number in secs
+		writeSector(buffer + (counter * 512), nextFree);
+		secs[counter] = nextFree;
+		counter++;
+		sectors--;
+	}
+
+	// Read the disk map and directory into our arrays
+	readSector(diskMap, 1);
+	readSector(diskDir, 2);
+	
+	// The file's name is stored in the disk directory
+	for (i; i < 6; i++) {
+		diskDir[dirLoc + i] = fname[i];
+	}
+
+	// Iterator is reset
+	i = 0;
+
+	// The sectors used are set to full (0xFF) on the disk map
+	for (i; i < counter; i++) {
+		diskMap[secs[i]] = 0xFF; 
+	}
+	i = 0;
+
+	// The sectors used to store the file are recorded in the disk directory
+	for (i; i < 26; i++) {
+		diskDir[dirLoc + 6 + i] = secs[i];
+	}
+	
+	// The modified disk map and directory are written back to the disk
+	writeSector(diskMap, 1);
+	writeSector(diskDir, 2);
+
+	// The number of sectors written is returned
+	return counter;
+
+}
+
+
+// This helper function finds the next available disk directory entry
+// Returns an int corresponding to the absolute location of the starting character of the next free disk directory entry
+int dirSpace() {
+
+	// The return value is stored with dirLoc
+	int dirLoc;
+
+	// This array will hold th edisk directory
+	char diskDir[512];
+
+	// int is initialized
+	dirLoc = 0;
+
+	// disk directory is read into array
+	readSector(diskDir, 2);
+
+	// the disk directory is searched for a free entry
+	for (dirLoc; dirLoc < 512; dirLoc += 32) {
+		if (diskDir[dirLoc] == 0x00) {
+			return dirLoc;
+		}
+	}
+
+	// If no entries are free reutrn -1
+	return -1;
+
+}
+
+
+// This helper function finds the location of the next free sector in the disk map
+// Returns an int corresponding to the sector number that is free
+int mapSpace() {
+	
+	// i stored our return value
+	int i;
+
+	// The disk map will be read into this array
+	char diskMap[512];
+
+	// i is initialized
+	i = 0;
+
+	// The disk map is read into our array
+	readSector(diskMap, 1);
+
+	// We search the disk map for a free sector
+	for (i; i < 512; i++) {
+		if (diskMap[i] == 0x00) {
+			return i;
+		}
+	}
+	
+	// If no sectors are free return -1
+	return -1;
+}
+
+
+// Writes the names and sizes of each file on the disk into buffers so they can be displayed
+// Takes a pointer to a char array where the file names will be stored (each seperated by a space),
+// and a pointer to an int array where the size of each file will be stored
+void directory(char *nameBuf, int *sizeBuf) {
+
+	// direcLoc tracks where in the directory we are
+	// nameBufPos tracks our position in the name buffer
+	// sizeBufPos tracks our position in the size buffer
+	// j is an iterator
+	int direcLoc, j, nameBufPos, sizeBufPos;
+
+	// The disk directory will be read into this array
+	char diskDir[512];
+
+	// Ints are initialized
+	direcLoc = 0;
+	j = 0;
+	nameBufPos = 0;
+	sizeBufPos = 0;
+
+	// Disk directory is read into our array
+	readSector(diskDir, 2);
+
+	// We need to search through the whole directory because there could be gaps due to deleted files
+	while (direcLoc < 512) {	
+
+		// We look for entries representing active files
+		if (diskDir[direcLoc] != 0x00) {
+
+			// We then read the name of the active file into our array
+			for (j; j < 6; j++) {
+				if (diskDir[direcLoc + j] != 0x00) {
+					nameBuf[nameBufPos] = diskDir[direcLoc + j];
+					nameBufPos++;
+				}
+			}
+
+			// We add a space betwen file names
+			nameBuf[nameBufPos] = ' ';
+			nameBufPos++;
+
+			// Iterator is reset
+			j = 0;
+
+			// For each file we add up the number of sectors is fills up
+			while (diskDir[direcLoc + j + 6] != 0x00 && j < 26) {
+				sizeBuf[sizeBufPos] += 1;
+				j++;
+			}
+			sizeBufPos++;
+			j = 0;
+		}
+		
+		// Then we move to the next disk directory entry which is 32 bytes later
+		direcLoc += 32;
+	}
+}
+
+
